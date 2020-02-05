@@ -12,28 +12,18 @@ file to edit: tensor.ipynb
 
 import TensorFlow
 
-let Q:Int64 = 0 // We use the implicit Int64 modulo
-
 let SCALING_BASE = 3
 let PRECISION_INTEGRAL   = 7
 let PRECISION_FRACTIONAL = 8
 let MATMUL_THRESHOLD = 256
 let TRUNCATION_GAP = 20
 
-let SCALING_FACTOR = pow(Double(SCALING_BASE), Double(PRECISION_FRACTIONAL))
+let SCALING_FACTOR = pow(Float(SCALING_BASE), Float(PRECISION_FRACTIONAL))
 let TOTAL_PRECISION = PRECISION_INTEGRAL + PRECISION_FRACTIONAL
-let BOUND_SINGLE_PRECISION = Int64(pow(Double(SCALING_BASE), Double(TOTAL_PRECISION)))
+let BOUND_SINGLE_PRECISION = Int64(pow(Float(SCALING_BASE), Float(TOTAL_PRECISION)))
 let NATIVE_MIN = Int64(Int64.min)
 let NATIVE_MAX = Int64(Int64.max)
 
-
-func mod(_ x: Tensor<Int64>, _ q: Int64) -> Tensor<Int64>{
-    if q != 0{
-        return Raw.floorMod(x, Tensor<Int64>([q]))
-    }else{
-        return x
-    }
-}
 
 extension TensorShape {
   func countElements() -> Int{
@@ -45,17 +35,17 @@ extension TensorShape {
   }
 }
 
-func _encode(rationals: Tensor<Double>) -> Tensor<Int64>{
+func _encode(rationals: Tensor<Float>) -> Tensor<Int64>{
     let scaled = rationals * SCALING_FACTOR 
     let integer = Tensor<Int64>(scaled)
     return integer
 }
 
-func _decode(field_element: Tensor<Int64>) -> Tensor<Double>{
+func _decode(field_element: Tensor<Int64>) -> Tensor<Float>{
     let bound = BOUND_SINGLE_PRECISION
     let scaled = (field_element + bound) - bound
-    let scaled_rationals = Tensor<Double>(scaled)
-    return scaled_rationals / Double(SCALING_FACTOR)
+    let scaled_rationals = Tensor<Float>(scaled)
+    return scaled_rationals / Float(SCALING_FACTOR)
 }
 
 // NOTE Should be able to use Tensor(randomUniform instead)
@@ -65,12 +55,12 @@ func makeRandomList(_ n: Int, min: Int64 = NATIVE_MIN, max: Int64 = NATIVE_MAX) 
 
 func _share(x: Tensor<Int64>) -> (Tensor<Int64>, Tensor<Int64>){
     let share0 = Tensor<Int64>(makeRandomList(x.shape.countElements())).reshaped(to: x.shape)
-    let share1 = mod(x - share0, Q)
+    let share1 = x - share0
     return (share0, share1)
 }
 
 func reconstruct(share0: Tensor<Int64>, share1: Tensor<Int64>) -> Tensor<Int64>{
-  let rec = mod(share0 + share1, Q)
+  let rec = share0 + share1
   return rec
 }
 
@@ -93,7 +83,7 @@ public struct PublicTensor: PondTensor {
     self.elements = elements
   }
 
-  public static func from_values(values: Tensor<Double>) -> PublicTensor{
+  public static func from_values(values: Tensor<Float>) -> PublicTensor{
     let enc_val = _encode(rationals: values)
 
     return PublicTensor(elements: enc_val)
@@ -107,16 +97,16 @@ public struct PublicTensor: PondTensor {
     return self
   }
 
-  public func decode() -> Tensor<Double>{
+  public func decode() -> Tensor<Float>{
     return _decode(field_element: self.elements)
   }
     
   public func truncate() -> PublicTensor {
-    let positive_numbers = Tensor<Int64>(_Raw.lessEqual(self.elements, Tensor<Int64>([Q/2])))
+    let positive_numbers = Tensor<Int64>(_Raw.lessEqual(self.elements, Tensor<Int64>([0])))
     var elements = self.elements
-    elements = mod((Q + (2 * positive_numbers - 1) * elements), Q)
+    elements = (2 * positive_numbers - 1) * elements
     elements = _Raw.floorDiv(elements, Tensor<Int64>([Int64(SCALING_FACTOR)]))
-    elements = mod((Q + (2 * positive_numbers - 1) * elements), Q) //#
+    elements = (2 * positive_numbers - 1) * elements
 
     return PublicTensor(elements: elements)
    }
@@ -124,18 +114,18 @@ public struct PublicTensor: PondTensor {
 
 
 func add(x: PublicTensor, y: PublicTensor) -> PublicTensor{
-    let elements = mod(x.elements + y.elements, Q)
+    let elements = x.elements + y.elements
     return PublicTensor(elements: elements)
 }
     
 func mul(x: PublicTensor, y: PublicTensor) -> PublicTensor{
-    let elements = mod(_Raw.mul(x.elements, y.elements), Q)
+    let elements = _Raw.mul(x.elements, y.elements)
     return PublicTensor(elements: elements).truncate()
 }
 
 
 public func matmul(x: PublicTensor, y: PublicTensor) -> PublicTensor{
-    let elements = mod(_Raw.matMul(x.elements, y.elements), Q)
+    let elements = _Raw.matMul(x.elements, y.elements)
     return PublicTensor(elements: elements).truncate()
 }
 
@@ -160,12 +150,12 @@ public struct PublicFieldTensor: PondTensor {
 }
 
 public func add(x: PublicFieldTensor, y: PublicFieldTensor) -> PublicFieldTensor{
-    let elements = mod(x.elements + y.elements, Q)
+    let elements = x.elements + y.elements
     return PublicFieldTensor(elements: elements)
   }
 
 public func add(x: PublicFieldTensor, y: PrivateFieldTensor) -> PrivateFieldTensor{
-    let share0 = mod(x.elements + y.share0, Q)
+    let share0 = x.elements + y.share0
     let share1 = y.share1
     return PrivateFieldTensor(share0: share0, share1: share1)
 }
@@ -176,8 +166,8 @@ func matmul(x: PublicFieldTensor, y: PublicFieldTensor) -> PublicFieldTensor{
 }
 
 func matmul(x: PublicFieldTensor, y: PrivateFieldTensor) -> PrivateFieldTensor{
-    let share0 = mod(Raw.matMul(x.elements, y.share0), Q)
-    let share1 = mod(Raw.matMul(x.elements, y.share1), Q)
+    let share0 = Raw.matMul(x.elements, y.share0)
+    let share1 = Raw.matMul(x.elements, y.share1)
     return PrivateFieldTensor(share0: share0, share1: share1)
 }
 
@@ -205,14 +195,14 @@ public struct PrivateFieldTensor: PondTensor{
 }
 
 public func add(x: PrivateFieldTensor, y: PrivateFieldTensor) -> PrivateFieldTensor{
-    let share0 = mod(x.share0 + y.share0, Q)
-    let share1 = mod(x.share1 + y.share1, Q)
+    let share0 = x.share0 + y.share0
+    let share1 = x.share1 + y.share1
     return PrivateFieldTensor(share0: share0, share1: share1)
 }
     
  public func add(x: PrivateFieldTensor, y: PublicFieldTensor) -> PrivateFieldTensor{
-    let share0 = mod(x.share0 + y.elements, Q)
-    let share1 = mod(x.share1, Q)
+    let share0 = x.share0 + y.elements
+    let share1 = x.share1
     return PrivateFieldTensor(share0: share0, share1: share1)
   }
 
@@ -247,7 +237,7 @@ public struct PrivateTensor: PondTensor {
     self.share1 = share1
   }
 
-  public static func from_values(values: Tensor<Double>) -> PrivateTensor{
+  public static func from_values(values: Tensor<Float>) -> PrivateTensor{
     let x_shared = _share(x: _encode(rationals: values))
     return PrivateTensor(share0: x_shared.0, share1: x_shared.1)
   }
@@ -259,38 +249,38 @@ public struct PrivateTensor: PondTensor {
 
   public func truncate() -> PrivateTensor {
     let share0 = _Raw.floorDiv(self.share0, Tensor<Int64>([Int64(SCALING_FACTOR)]))
-    let share1 =  mod((Q - _Raw.floorDiv(Q - self.share1, Tensor<Int64>([Int64(SCALING_FACTOR)]))), Q)
+    let share1 =  _Raw.floorDiv(self.share1, Tensor<Int64>([Int64(SCALING_FACTOR)]))
     return PrivateTensor(share0: share0, share1: share1)
    }
 }
 
 public func add(x: PrivateTensor, y: PublicTensor) -> PrivateTensor{
-    let share0 =  mod(x.share0 + y.elements, Q)
+    let share0 =  x.share0 + y.elements
     let share1 = x.share1
     return PrivateTensor(share0: share0, share1: share1)
   }
     
 public func add(x: PrivateTensor, y: PrivateTensor) -> PrivateTensor{
-    let share0 = mod(x.share0 + y.share0, Q)
-    let share1 = mod(x.share1 + y.share1, Q)
+    let share0 = x.share0 + y.share0
+    let share1 = x.share1 + y.share1
     return PrivateTensor(share0: share0, share1: share1)
 }
 
 public func sub(x: PrivateTensor, y: PublicTensor) -> PrivateTensor{
-    let share0 = mod(x.share0 - y.elements, Q)
+    let share0 = x.share0 - y.elements
     let share1 = x.share1
     return PrivateTensor(share0: share0, share1: share1)
 }
 
 public func sub(x: PrivateTensor, y: PrivateTensor) -> PrivateTensor{
-    let share0 = mod(x.share0 - y.share0, Q)
-    let share1 = mod(x.share1 - y.share1, Q)
+    let share0 = x.share0 - y.share0
+    let share1 = x.share1 - y.share1
     return PrivateTensor(share0: share0, share1: share1)
 }
 
 public func sub(x: PrivateTensor, y: PrivateFieldTensor) -> PrivateFieldTensor{
-  let share0 = mod(x.share0 - y.share0, Q)
-  let share1 = mod(x.share1 - y.share1, Q)
+  let share0 = x.share0 - y.share0
+  let share1 = x.share1 - y.share1
   return PrivateFieldTensor(share0: share0, share1: share1)
 }
 
