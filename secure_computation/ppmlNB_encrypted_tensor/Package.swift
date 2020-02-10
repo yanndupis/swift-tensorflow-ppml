@@ -2,9 +2,9 @@
 import PackageDescription
 
 let package = Package(
-name: "ppmlNB_tensor",
+name: "ppmlNB_encrypted_tensor",
 products: [
-.library(name: "ppmlNB_tensor", targets: ["ppmlNB_tensor"]),
+.library(name: "ppmlNB_encrypted_tensor", targets: ["ppmlNB_encrypted_tensor"]),
 
 ],
 dependencies: [
@@ -13,7 +13,7 @@ dependencies: [
     .package(url: "https://github.com/latenitesoft/NotebookExport", from: "0.5.0")
 ],
 targets: [
-.target(name: "ppmlNB_tensor", dependencies: ["Path", "Just", "NotebookExport"]),
+.target(name: "ppmlNB_encrypted_tensor", dependencies: ["Path", "Just", "NotebookExport"]),
 
 ]
 )
